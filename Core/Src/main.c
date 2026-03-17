@@ -22,6 +22,7 @@
 #include "i2c.h"
 #include "usart.h"
 #include "gpio.h"
+#include <stdio.h>
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -113,6 +114,12 @@ int16_t swap_bytes(int16_t val) {
     // Cast to unsigned to prevent sign-extension issues during the shift
     return (int16_t)( ((uint16_t)val << 8) | ((uint16_t)val >> 8) );
 }
+
+int _write(int file, char *ptr, int len) {
+    HAL_UART_Transmit(&huart2, (uint8_t*)ptr, len, HAL_MAX_DELAY);
+    return len;
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -149,7 +156,11 @@ int main(void)
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
   // Wake up the MPU6050 by writing 0 to the Power Management register (0x6B)
+  // 1. Turn off printf buffering so it sends data instantly!
+  	  setvbuf(stdout, NULL, _IONBF, 0);
 
+    // 2. Print a boot message to prove the USB cable and COM port work
+  	  printf("STM32 is awake and booting!\r\n");
 
       uint8_t data;
 
@@ -166,7 +177,7 @@ int main(void)
       HAL_I2C_Mem_Write(&hi2c1, (0x68 << 1), 0x19, 1, &data, 1, HAL_MAX_DELAY);
 
       // 4. Configure the Interrupt Pin (INT_PIN_CFG = 0x00)
-      data = 0x00;
+      data = 0x10;
       HAL_I2C_Mem_Write(&hi2c1, (0x68 << 1), 0x37, 1, &data, 1, HAL_MAX_DELAY);
 
       // 5. Enable the Data Ready Interrupt (INT_ENABLE = 0x01)
@@ -208,17 +219,25 @@ int main(void)
                 }
 
                 // 3. Print a quick sanity check of the first sample's Z-axis
-                sprintf(uart_buffer, "Snapshot Ready! Z-Accel: %.2f g\r\n", processed_buffer[0].accel_z);
-                HAL_UART_Transmit(&huart2, (uint8_t*)uart_buffer, strlen(uart_buffer), 100);
+                // 3. Print a quick sanity check
+                                if (snapshot_ready) {
+                                	printf("$");
+                                	for (int i = 0; i < SNAPSHOT_SAMPLES; i++){
+                                		printf("%.3f\r\n", processed_buffer[i].accel_x);
 
-                // 4. Print how many times the CPU looped during those 2 seconds
-                sprintf(uart_buffer, "Free CPU loops: %lu\r\n\n", free_cpu_counter);
-                HAL_UART_Transmit(&huart2, (uint8_t*)uart_buffer, strlen(uart_buffer), 100);
+                                		HAL_Delay(10);
+                                	}
 
-                // 5. Reset the counter and the flag for the next 2-second window
-                free_cpu_counter = 0;
-                snapshot_ready = 0;
-            }
+
+                                	snapshot_ready = 0;
+                                }
+                            } // Closes: if (snapshot_ready)
+                        } // Closes: while (1)
+                  /* USER CODE END WHILE */
+
+                  /* USER CODE BEGIN 3 */
+
+                } // Closes: int main(void)
             /* USER CODE END WHILE */
  /* while (1)
   {
@@ -242,7 +261,7 @@ int main(void)
 					processed_buffer[i].gyro_z = raw_gz / 131.0f;
 	        	          }
 	            snapshot_ready = 0; // Reset the flag
-	        } *?
+*/
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -260,9 +279,7 @@ int main(void)
 	  HAL_UART_Transmit(&huart2, (uint8_t*)uart_buffer, strlen(uart_buffer), 100);
 
 	  HAL_Delay(10); */
-  }
 
-}
   /* USER CODE END 3 */
 
 /**
@@ -309,32 +326,32 @@ void SystemClock_Config(void)
 /* USER CODE BEGIN 4 */
 // 1. This fires when the MPU6050 INT pin hits the STM32
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-    // Check if the interrupt came from your specific pin (change GPIO_PIN_0 if needed)
     if (GPIO_Pin == GPIO_PIN_0) {
-        // Only trigger if we aren't already processing a snapshot or a DMA transfer
+       // printf("E\r\n"); // <-- Added \r\n
+
         if (!snapshot_ready && !dma_busy) {
             dma_busy = 1;
 
-            // Start the DMA background read
-            HAL_I2C_Mem_Read_DMA(&hi2c1,
-                                 MPU6050_ADDR,
-                                 MPU6050_REG_DATA_START,
-                                 I2C_MEMADD_SIZE_8BIT,
-                                 (uint8_t*)&imu_buffer[sample_index],
-                                 14);
+            if (HAL_I2C_Mem_Read_DMA(&hi2c1, MPU6050_ADDR, MPU6050_REG_DATA_START,
+                                     I2C_MEMADD_SIZE_8BIT, (uint8_t*)&imu_buffer[sample_index], 14) != HAL_OK) {
+                dma_busy = 0;
+                //printf("F\r\n"); // <-- Added \r\n
+            }
         }
     }
 }
 
-// 2. This fires automatically when the DMA finishes moving those 14 bytes
+// 2. This fires automatically when the DMA finishes
 void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
     if (hi2c->Instance == I2C1) {
-        dma_busy = 0;   // Unlock for the next heartbeat
-        sample_index++; // Move to next slot in our 200-sample array
+       // printf("D\r\n"); // <-- Added \r\n
+
+        dma_busy = 0;
+        sample_index++;
 
         if (sample_index >= SNAPSHOT_SAMPLES) {
-            snapshot_ready = 1; // 2 seconds of data captured!
-            sample_index = 0;   // Reset for next time
+            snapshot_ready = 1;
+            sample_index = 0;
         }
     }
 }
@@ -354,6 +371,7 @@ void Error_Handler(void)
   }
   /* USER CODE END Error_Handler_Debug */
 }
+
 
 
 
