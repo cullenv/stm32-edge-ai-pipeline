@@ -23,6 +23,7 @@
 #include "usart.h"
 #include "gpio.h"
 #include <stdio.h>
+#include <math.h>
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -101,6 +102,19 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+float calculate_rms(float *data_array, uint16_t length){
+	float sum_of_squares = 0.0f;
+
+	for (uint16_t i = 0; i < length; i++){
+		sum_of_squares += (data_array[i] * data_array[i]);
+	}
+
+	float mean_of_squares = sum_of_squares / length;
+
+	return sqrtf(mean_of_squares);
+}
+
 float apply_ema_filter(int16_t raw_x) {
     float alpha = 0.8f;
     static float previous_ema = 0.0f;
@@ -186,99 +200,66 @@ int main(void)
 
   /* USER CODE END 2 */
 
-  /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 
       // Create a variable to track how many times the loop runs
-        uint32_t free_cpu_counter = 0;
+      uint32_t free_cpu_counter = 0;
 
-        while (1)
-        {
-            // 1. Let the main loop spin as fast as it possibly can
-            free_cpu_counter++;
+              while (1)
+              {
+                  // 1. Let the main loop spin as fast as it possibly can
+                  free_cpu_counter++;
 
-            if (snapshot_ready) {
+                  if (snapshot_ready) {
 
-                // 2. Process the 200 samples (Your exact Day 4 code)
-                for (int i = 0; i < SNAPSHOT_SAMPLES; i++) {
-                    int16_t raw_ax = swap_bytes(imu_buffer[i].accel_x);
-                    int16_t raw_ay = swap_bytes(imu_buffer[i].accel_y);
-                    int16_t raw_az = swap_bytes(imu_buffer[i].accel_z);
+                      // 2. Process the 200 samples
+                      for (int i = 0; i < SNAPSHOT_SAMPLES; i++) {
+                          int16_t raw_ax = swap_bytes(imu_buffer[i].accel_x);
+                          int16_t raw_ay = swap_bytes(imu_buffer[i].accel_y);
+                          int16_t raw_az = swap_bytes(imu_buffer[i].accel_z);
 
-                    int16_t raw_gx = swap_bytes(imu_buffer[i].gyro_x);
-                    int16_t raw_gy = swap_bytes(imu_buffer[i].gyro_y);
-                    int16_t raw_gz = swap_bytes(imu_buffer[i].gyro_z);
+                          int16_t raw_gx = swap_bytes(imu_buffer[i].gyro_x);
+                          int16_t raw_gy = swap_bytes(imu_buffer[i].gyro_y);
+                          int16_t raw_gz = swap_bytes(imu_buffer[i].gyro_z);
 
-                    processed_buffer[i].accel_x = raw_ax / 16384.0f;
-                    processed_buffer[i].accel_y = raw_ay / 16384.0f;
-                    processed_buffer[i].accel_z = raw_az / 16384.0f;
+                          processed_buffer[i].accel_x = raw_ax / 16384.0f;
+                          processed_buffer[i].accel_y = raw_ay / 16384.0f;
+                          processed_buffer[i].accel_z = raw_az / 16384.0f;
 
-                    processed_buffer[i].gyro_x = raw_gx / 131.0f;
-                    processed_buffer[i].gyro_y = raw_gy / 131.0f;
-                    processed_buffer[i].gyro_z = raw_gz / 131.0f;
-                }
+                          processed_buffer[i].gyro_x = raw_gx / 131.0f;
+                          processed_buffer[i].gyro_y = raw_gy / 131.0f;
+                          processed_buffer[i].gyro_z = raw_gz / 131.0f;
+                      }
 
-                // 3. Print a quick sanity check of the first sample's Z-axis
-                // 3. Print a quick sanity check
-                                if (snapshot_ready) {
-                                	printf("$");
-                                	for (int i = 0; i < SNAPSHOT_SAMPLES; i++){
-                                		printf("%.3f\r\n", processed_buffer[i].accel_x);
+                      // --- 3. EXTRACT FEATURES (RMS for X, Y, Z) ---
 
-                                		HAL_Delay(10);
-                                	}
+					  float x_axis_data[SNAPSHOT_SAMPLES];
+					  float y_axis_data[SNAPSHOT_SAMPLES];
+					  float z_axis_data[SNAPSHOT_SAMPLES];
 
+					  for(int i = 0; i < SNAPSHOT_SAMPLES; i++) {
+						  x_axis_data[i] = processed_buffer[i].accel_x;
+						  y_axis_data[i] = processed_buffer[i].accel_y;
+						  z_axis_data[i] = processed_buffer[i].accel_z;
+					  }
 
-                                	snapshot_ready = 0;
-                                }
-                            } // Closes: if (snapshot_ready)
-                        } // Closes: while (1)
-                  /* USER CODE END WHILE */
+					  float x_rms = calculate_rms(x_axis_data, SNAPSHOT_SAMPLES);
+					  float y_rms = calculate_rms(y_axis_data, SNAPSHOT_SAMPLES);
+					  float z_rms = calculate_rms(z_axis_data, SNAPSHOT_SAMPLES);
 
-                  /* USER CODE BEGIN 3 */
+					  // Print as a clean CSV row: X, Y, Z
+					  printf("%.4f,%.4f,%.4f\r\n", x_rms, y_rms, z_rms);
 
-                } // Closes: int main(void)
-            /* USER CODE END WHILE */
- /* while (1)
-  {
-	        if (snapshot_ready) {
-	        	for (int i = 0; i < SNAPSHOT_SAMPLES; i++) {
-					int16_t raw_ax = swap_bytes(imu_buffer[i].accel_x);
-					int16_t raw_ay = swap_bytes(imu_buffer[i].accel_y);
-					int16_t raw_az = swap_bytes(imu_buffer[i].accel_z);
+                      // ---------------------------------
 
-					int16_t raw_gx = swap_bytes(imu_buffer[i].gyro_x);
-					int16_t raw_gy = swap_bytes(imu_buffer[i].gyro_y);
-					int16_t raw_gz = swap_bytes(imu_buffer[i].gyro_z);
+                      // 4. Reset the flag for the next 2-second window
+                      snapshot_ready = 0;
+                  }
+              }
+          }
+ /* USER CODE END WHILE */
 
-								  // 3. Convert to physical units (g's and deg/s)
-					processed_buffer[i].accel_x = raw_ax / 16384.0f;
-					processed_buffer[i].accel_y = raw_ay / 16384.0f;
-					processed_buffer[i].accel_z = raw_az / 16384.0f;
-
-					processed_buffer[i].gyro_x = raw_gx / 131.0f;
-					processed_buffer[i].gyro_y = raw_gy / 131.0f;
-					processed_buffer[i].gyro_z = raw_gz / 131.0f;
-	        	          }
-	            snapshot_ready = 0; // Reset the flag
-*/
-    /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
-	  // Read High and Low bytes of X-axis
-	/*  HAL_I2C_Mem_Read(&hi2c1, (0x68 << 1), 0x3B, 1, dataBuffer, 2, 1000);
-
-	  // Assemble 16-bit integer
-	  sensor_data.raw_x = (int16_t)(dataBuffer[0] << 8 | dataBuffer[1]);
-
-	  // Apply EMA Filter
-	  sensor_data.filtered_x = apply_ema_filter(sensor_data.raw_x);
-
-	  // Format and send to Serial Monitor
-	  sprintf(uart_buffer, "%d, %.2f\r\n", sensor_data.raw_x, sensor_data.filtered_x);
-	  HAL_UART_Transmit(&huart2, (uint8_t*)uart_buffer, strlen(uart_buffer), 100);
-
-	  HAL_Delay(10); */
+ /* USER CODE BEGIN 3 */
 
   /* USER CODE END 3 */
 
