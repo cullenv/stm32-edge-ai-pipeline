@@ -56,10 +56,13 @@ typedef struct {
 // The 2-second buffer
 volatile IMU_Sample_t imu_buffer[SNAPSHOT_SAMPLES];
 
+
+
 // State tracking variables
 volatile uint16_t sample_index = 0;
 volatile uint8_t snapshot_ready = 0;
 volatile uint8_t dma_busy = 0;
+volatile uint8_t i2c_crashed = 0;
 
 typedef struct {
     float accel_x;
@@ -72,6 +75,10 @@ typedef struct {
 
 // The final 2-second processed buffer
 IMU_Physical_t processed_buffer[SNAPSHOT_SAMPLES];
+
+float x_axis_data[SNAPSHOT_SAMPLES];
+float y_axis_data[SNAPSHOT_SAMPLES];
+float z_axis_data[SNAPSHOT_SAMPLES];
 
 /* USER CODE END PV */
 
@@ -130,7 +137,7 @@ int16_t swap_bytes(int16_t val) {
 }
 
 int _write(int file, char *ptr, int len) {
-    HAL_UART_Transmit(&huart2, (uint8_t*)ptr, len, HAL_MAX_DELAY);
+    HAL_UART_Transmit(&huart2, (uint8_t*)ptr, len, 100);
     return len;
 }
 
@@ -204,6 +211,7 @@ int main(void)
 
       // Create a variable to track how many times the loop runs
       uint32_t free_cpu_counter = 0;
+      uint32_t last_heartbeat = HAL_GetTick();
 
               while (1)
               {
@@ -233,9 +241,8 @@ int main(void)
 
                       // --- 3. EXTRACT FEATURES (RMS for X, Y, Z) ---
 
-					  float x_axis_data[SNAPSHOT_SAMPLES];
-					  float y_axis_data[SNAPSHOT_SAMPLES];
-					  float z_axis_data[SNAPSHOT_SAMPLES];
+                      // (Deleted the float array declarations from here) Stack Overflow
+
 
 					  for(int i = 0; i < SNAPSHOT_SAMPLES; i++) {
 						  x_axis_data[i] = processed_buffer[i].accel_x;
@@ -254,9 +261,37 @@ int main(void)
 
                       // 4. Reset the flag for the next 2-second window
                       snapshot_ready = 0;
+
+                      last_heartbeat = HAL_GetTick();
                   }
+
+                  if (i2c_crashed || (HAL_GetTick() - last_heartbeat > 3000)) {
+                	  if (i2c_crashed){
+                		  printf("EMI Crash Detected! Recovering...\r\n");
+                	  } else {
+                		  printf("Sensor Timeout! Rebooting...\r\n");
+                	  }
+
+					// 1. Force the I2C bus to un-stick
+					HAL_I2C_DeInit(&hi2c1);
+					HAL_I2C_Init(&hi2c1);
+
+					// 2. Re-send all configuration bytes to the MPU6050
+					uint8_t data;
+					data = 0x00; HAL_I2C_Mem_Write(&hi2c1, (0x68 << 1), 0x6B, 1, &data, 1, 100);
+					data = 0x03; HAL_I2C_Mem_Write(&hi2c1, (0x68 << 1), 0x1A, 1, &data, 1, 100);
+					data = 0x09; HAL_I2C_Mem_Write(&hi2c1, (0x68 << 1), 0x19, 1, &data, 1, 100);
+					data = 0x10; HAL_I2C_Mem_Write(&hi2c1, (0x68 << 1), 0x37, 1, &data, 1, 100);
+					data = 0x01; HAL_I2C_Mem_Write(&hi2c1, (0x68 << 1), 0x38, 1, &data, 1, 100);
+
+					// 3. Reset our variables and timer
+					dma_busy = 0;
+					sample_index = 0;
+					i2c_crashed = 0;
+					last_heartbeat = HAL_GetTick();
               }
           }
+     }
  /* USER CODE END WHILE */
 
  /* USER CODE BEGIN 3 */
@@ -308,15 +343,11 @@ void SystemClock_Config(void)
 // 1. This fires when the MPU6050 INT pin hits the STM32
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
     if (GPIO_Pin == GPIO_PIN_0) {
-       // printf("E\r\n"); // <-- Added \r\n
-
         if (!snapshot_ready && !dma_busy) {
             dma_busy = 1;
-
             if (HAL_I2C_Mem_Read_DMA(&hi2c1, MPU6050_ADDR, MPU6050_REG_DATA_START,
                                      I2C_MEMADD_SIZE_8BIT, (uint8_t*)&imu_buffer[sample_index], 14) != HAL_OK) {
                 dma_busy = 0;
-                //printf("F\r\n"); // <-- Added \r\n
             }
         }
     }
@@ -325,15 +356,19 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 // 2. This fires automatically when the DMA finishes
 void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
     if (hi2c->Instance == I2C1) {
-       // printf("D\r\n"); // <-- Added \r\n
-
         dma_busy = 0;
         sample_index++;
-
         if (sample_index >= SNAPSHOT_SAMPLES) {
             snapshot_ready = 1;
             sample_index = 0;
         }
+    }
+}
+
+// 3. This fires if EMI crashes the I2C bus
+void HAL_I2C_ErrorCallback(I2C_HandleTypeDef *hi2c) {
+    if (hi2c->Instance == I2C1) {
+        i2c_crashed = 1; // Just set the flag and get out!
     }
 }
 /* USER CODE END 4 */
