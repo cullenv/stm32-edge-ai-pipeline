@@ -27,7 +27,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "app_inference.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -257,7 +257,8 @@ int main(void)
 					  // Print as a clean CSV row: X, Y, Z
 					  printf("%.4f,%.4f,%.4f\r\n", x_rms, y_rms, z_rms);
 
-                      // ---------------------------------
+					  //AI Brain
+					  run_ml_inference(x_rms, y_rms, z_rms);
 
                       // 4. Reset the flag for the next 2-second window
                       snapshot_ready = 0;
